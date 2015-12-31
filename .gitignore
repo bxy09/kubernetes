@@ -77,3 +77,5 @@ doc_tmp/
 # Config directories created by gcloud and gsutil on Jenkins
 /.config/gcloud/
 /.gsutil/
+
+.idea
