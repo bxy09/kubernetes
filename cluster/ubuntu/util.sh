@@ -237,7 +237,8 @@ KUBELET_OPTS="--address=0.0.0.0 \
 --api-servers=http://$2:8080 \
 --logtostderr=true \
 --cluster-dns=$3 \
---cluster-domain=$4"
+--cluster-domain=$4 \
+--pod-infra-container-image=daocloud.io/gpx_dev/pause:0.8.0"
 EOF
 
 }
