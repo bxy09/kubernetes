@@ -198,7 +198,9 @@ EOF
 
 function create-kube-apiserver-opts(){
   cat <<EOF > ~/kube/default/kube-apiserver
-KUBE_APISERVER_OPTS="--insecure-bind-address=0.0.0.0 \
+KUBE_APISERVER_OPTS="\
+--runtime-config=extensions/v1beta1/daemonsets=true \
+--insecure-bind-address=0.0.0.0 \
 --insecure-port=8080 \
 --etcd-servers=http://127.0.0.1:4001 \
 --logtostderr=true \
