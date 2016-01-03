@@ -20,7 +20,14 @@ set -e
 
 KUBE_ROOT=$(dirname "${BASH_SOURCE}")/../..
 source "config-default.sh"
-KUBECTL="${KUBE_ROOT}/cluster/kubectl.sh"
+#KUBECTL= ${KUBECTL:-"${KUBE_ROOT}/cluster/kubectl.sh"}
+
+
+kube () {
+    kubectl -s ${KUBE_SERVER:-"127.0.0.1"}:8080 $@
+}
+
+KUBECTL=${KUBECTL:-"kube"}
 
 function init {
   echo "Creating kube-system namespace..."
@@ -28,11 +35,11 @@ function init {
   NAMESPACE=`eval "${KUBECTL} get namespaces | grep kube-system | cat"`
 
   if [ ! "$NAMESPACE" ]; then
-    ${KUBECTL} create -f namespace.yaml 
+    ${KUBECTL} create -f namespace.yaml
     echo "The namespace 'kube-system' is successfully created."
   else
     echo "The namespace 'kube-system' is already there. Skipping."
-  fi 
+  fi
 
   echo
 }
@@ -43,10 +50,10 @@ function deploy_dns {
   sed -e "s/{{ pillar\['dns_server'\] }}/${DNS_SERVER_IP}/g" "${KUBE_ROOT}/cluster/addons/dns/skydns-svc.yaml.in" > skydns-svc.yaml
 
   KUBEDNS=`eval "${KUBECTL} get services --namespace=kube-system | grep kube-dns | cat"`
-      
+
   if [ ! "$KUBEDNS" ]; then
     # use kubectl to create skydns rc and service
-    ${KUBECTL} --namespace=kube-system create -f skydns-rc.yaml 
+    ${KUBECTL} --namespace=kube-system create -f skydns-rc.yaml
     ${KUBECTL} --namespace=kube-system create -f skydns-svc.yaml
 
     echo "Kube-dns rc and service is successfully deployed."
@@ -76,7 +83,6 @@ function deploy_ui {
 
   echo
 }
-
 init
 
 if [ "${ENABLE_CLUSTER_DNS}" == true ]; then
@@ -86,4 +92,3 @@ fi
 if [ "${ENABLE_CLUSTER_UI}" == true ]; then
   deploy_ui
 fi
-

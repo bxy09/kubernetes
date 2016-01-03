@@ -33,11 +33,11 @@ function test-build-release {
 # From user input set the necessary k8s and etcd configuration information
 function setClusterInfo() {
   # Initialize NODE_IPS in setClusterInfo function
-  # NODE_IPS is defined as a global variable, and is concatenated with other nodeIP	
+  # NODE_IPS is defined as a global variable, and is concatenated with other nodeIP
   # When setClusterInfo is called for many times, this could cause potential problems
   # Such as, you will have NODE_IPS=192.168.0.2,192.168.0.3,192.168.0.2,192.168.0.3 which is obviously wrong
   NODE_IPS=""
-  
+
   ii=0
   for i in $nodes; do
     nodeIP=${i#*@}
@@ -352,7 +352,8 @@ function provision-master() {
   echo "Deploying master on machine ${MASTER_IP}"
   echo
   ssh $SSH_OPTS $MASTER "mkdir -p ~/kube/default"
-  scp -r $SSH_OPTS saltbase/salt/generate-cert/make-ca-cert.sh ubuntu/reconfDocker.sh ubuntu/config-default.sh ubuntu/util.sh ubuntu/master/* ubuntu/binaries/master/ "${MASTER}:~/kube"
+  #scp -r $SSH_OPTS saltbase/salt/generate-cert/make-ca-cert.sh ubuntu/reconfDocker.sh ubuntu/config-default.sh ubuntu/util.sh ubuntu/master/* ubuntu/binaries/master/ "${MASTER}:~/kube"
+  scp -r $SSH_OPTS saltbase/salt/generate-cert/make-ca-cert.sh ubuntu/reconfDocker.sh ubuntu/config-default.sh ubuntu/util.sh ubuntu/master/* "${MASTER}:~/kube"
 
   # remote login to MASTER and use sudo to configue k8s master
   ssh $SSH_OPTS -t $MASTER "source ~/kube/util.sh; \
@@ -366,7 +367,12 @@ function provision-master() {
                             sudo groupadd -f -r kube-cert; \
                             ${PROXY_SETTING} sudo -E ~/kube/make-ca-cert.sh ${MASTER_IP} IP:${MASTER_IP},IP:${SERVICE_CLUSTER_IP_RANGE%.*}.1,DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local; \
                             sudo mkdir -p /opt/bin/ && sudo cp ~/kube/master/* /opt/bin/; \
+                            systemctl daemon-reload;
                             sudo service etcd start; \
+                            sudo service flanneld start; \
+                            sudo service kube-apiserver start; \
+                            sudo service kube-scheduler start; \
+                            sudo service kube-controller-manager start; \
                             sudo FLANNEL_NET=${FLANNEL_NET} -b ~/kube/reconfDocker.sh "a";"
 }
 
@@ -375,7 +381,8 @@ function provision-node() {
   echo "Deploying node on machine ${1#*@}"
   echo
   ssh $SSH_OPTS $1 "mkdir -p ~/kube/default"
-  scp -r $SSH_OPTS ubuntu/config-default.sh ubuntu/util.sh ubuntu/reconfDocker.sh ubuntu/minion/* ubuntu/binaries/minion "${1}:~/kube"
+  #scp -r $SSH_OPTS ubuntu/config-default.sh ubuntu/util.sh ubuntu/reconfDocker.sh ubuntu/minion/* ubuntu/binaries/minion "${1}:~/kube"
+  scp -r $SSH_OPTS ubuntu/config-default.sh ubuntu/util.sh ubuntu/reconfDocker.sh ubuntu/minion/* "${1}:~/kube"
 
   # remote login to MASTER and use sudo to configue k8s master
   ssh $SSH_OPTS -t $1 "source ~/kube/util.sh; \
@@ -385,7 +392,10 @@ function provision-node() {
                          create-flanneld-opts "${MASTER_IP}"; \
                          sudo -p '[sudo] password to start node: ' cp ~/kube/default/* /etc/default/ && sudo cp ~/kube/init_conf/* /etc/init/ && sudo cp ~/kube/systemd/* /lib/systemd/system/ && sudo cp ~/kube/init_scripts/* /etc/init.d/ \
                          && sudo mkdir -p /opt/bin/ && sudo cp ~/kube/minion/* /opt/bin; \
+                         systemctl daemon-reload;
                          sudo service flanneld start; \
+                         sudo service kubelet start; \
+                         sudo service kube-proxy start; \
                          sudo -b ~/kube/reconfDocker.sh "i";"
 }
 
@@ -395,7 +405,8 @@ function provision-masterandnode() {
   echo
   ssh $SSH_OPTS $MASTER "mkdir -p ~/kube/default"
   # scp order matters
-  scp -r $SSH_OPTS saltbase/salt/generate-cert/make-ca-cert.sh ubuntu/config-default.sh ubuntu/util.sh ubuntu/minion/* ubuntu/master/* ubuntu/reconfDocker.sh ubuntu/binaries/master/ ubuntu/binaries/minion "${MASTER}:~/kube"
+  #scp -r $SSH_OPTS saltbase/salt/generate-cert/make-ca-cert.sh ubuntu/config-default.sh ubuntu/util.sh ubuntu/minion/* ubuntu/master/* ubuntu/reconfDocker.sh ubuntu/binaries/master/ ubuntu/binaries/minion "${MASTER}:~/kube"
+  scp -r $SSH_OPTS saltbase/salt/generate-cert/make-ca-cert.sh ubuntu/config-default.sh ubuntu/util.sh ubuntu/minion/* ubuntu/master/* ubuntu/reconfDocker.sh "${MASTER}:~/kube"
 
   # remote login to the node and use sudo to configue k8s
   ssh $SSH_OPTS -t $MASTER "source ~/kube/util.sh; \
@@ -409,16 +420,25 @@ function provision-masterandnode() {
                             create-flanneld-opts "127.0.0.1"; \
                             sudo -p '[sudo] password to start master: ' cp ~/kube/default/* /etc/default/ && sudo cp ~/kube/init_conf/* /etc/init/ && sudo cp ~/kube/systemd/* /lib/systemd/system/ && sudo cp ~/kube/init_scripts/* /etc/init.d/ ; \
                             sudo groupadd -f -r kube-cert; \
+                            echo 'making certification, may take a long time';
                             ${PROXY_SETTING} sudo -E ~/kube/make-ca-cert.sh ${MASTER_IP} IP:${MASTER_IP},IP:${SERVICE_CLUSTER_IP_RANGE%.*}.1,DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local; \
+                            echo 'certification done'
                             sudo mkdir -p /opt/bin/ && sudo cp ~/kube/master/* /opt/bin/ && sudo cp ~/kube/minion/* /opt/bin/; \
+                            systemctl daemon-reload;
                             sudo service etcd start; \
+                            sudo service flanneld start; \
+                            sudo service kube-apiserver start; \
+                            sudo service kube-scheduler start; \
+                            sudo service kube-controller-manager start; \
+                            sudo service kubelet start; \
+                            sudo service kube-proxy start; \
                             sudo FLANNEL_NET=${FLANNEL_NET} -b ~/kube/reconfDocker.sh "ai";"
 }
 
 # Delete a kubernetes cluster
 function kube-down {
   source "${KUBE_ROOT}/cluster/ubuntu/${KUBE_CONFIG_FILE-"config-default.sh"}"
-  
+
   source "${KUBE_ROOT}/cluster/common.sh"
   tear_down_alive_resources
 
@@ -427,7 +447,7 @@ function kube-down {
     {
       echo "Cleaning on node ${i#*@}"
       if [[ "${roles[${ii}]}" == "ai" || "${roles[${ii}]}" == "a" ]]; then
-        ssh -t $i 'pgrep etcd && sudo -p "[sudo] password to stop master: " service etcd stop && sudo rm -rf /infra*; 
+        ssh -t $i 'pgrep etcd && sudo -p "[sudo] password to stop master: " service etcd stop && sudo rm -rf /infra*;
           sudo rm -rf /opt/bin/etcd* /etc/init/etcd.conf /lib/systemd/system/etcd.service /etc/init.d/etcd /etc/default/etcd'
       elif [[ "${roles[${ii}]}" == "i" ]]; then
         ssh -t $i 'pgrep flanneld && sudo -p "[sudo] password to stop node: " service flanneld stop'
@@ -437,7 +457,7 @@ function kube-down {
       # Delete the files in order to generate a clean environment, so you can change each node's role at next deployment.
       ssh -t $i 'sudo rm -f /opt/bin/kube* /opt/bin/flanneld;
       sudo rm -rf /etc/init/kube* /etc/init/flanneld.conf /lib/systemd/system/kube* /lib/systemd/system/flanneld.service /etc/init.d/kube* /etc/init.d/flanneld;
-      sudo rm -rf /etc/default/kube* /etc/default/flanneld; 
+      sudo rm -rf /etc/default/kube* /etc/default/flanneld;
       sudo rm -rf ~/kube /var/lib/kubelet'
     }
     ((ii=ii+1))
@@ -452,12 +472,12 @@ function prepare-push() {
     if [[ ! -d "${KUBE_ROOT}/cluster/ubuntu/binaries" ]]; then
       echo "No local binaries.Please check"
       exit 1
-    else 
+    else
       echo "Please make sure all the required local binaries are prepared ahead"
       sleep 3
     fi
   else
-    # Run build.sh to get the required release 
+    # Run build.sh to get the required release
     export KUBE_VERSION
     "${KUBE_ROOT}/cluster/ubuntu/build.sh"
   fi
@@ -481,16 +501,16 @@ function push-master {
       sudo rm -rf /opt/bin/etcd* /etc/init/etcd.conf /lib/systemd/system/etcd.service /etc/init.d/etcd /etc/default/etcd;
       sudo rm -f /opt/bin/kube* /opt/bin/flanneld;
       sudo rm -rf /etc/init/kube* /etc/init/flanneld.conf /lib/systemd/system/kube* /lib/systemd/system/flanneld.service /etc/init.d/kube* /etc/init.d/flanneld;
-      sudo rm -rf /etc/default/kube* /etc/default/flanneld; 
+      sudo rm -rf /etc/default/kube* /etc/default/flanneld;
       sudo rm -rf ~/kube' || true
       provision-master
-    elif [[ "${roles[${ii}]}" == "ai" ]]; then 
+    elif [[ "${roles[${ii}]}" == "ai" ]]; then
       echo "Cleaning master ${i#*@}"
       ssh -t $i 'sudo -p "[sudo] stop the all process: " service etcd stop;
       sudo rm -rf /opt/bin/etcd* /etc/init/etcd.conf /lib/systemd/system/etcd.service /etc/init.d/etcd /etc/default/etcd;
       sudo rm -f /opt/bin/kube* /opt/bin/flanneld;
       sudo rm -rf /etc/init/kube* /etc/init/flanneld.conf /lib/systemd/system/kube* /lib/systemd/system/flanneld.service /etc/init.d/kube* /etc/init.d/flanneld;
-      sudo rm -rf /etc/default/kube* /etc/default/flanneld; 
+      sudo rm -rf /etc/default/kube* /etc/default/flanneld;
       sudo rm -rf ~/kube' || true
       provision-masterandnode
     elif [[ "${roles[${ii}]}" == "i" ]]; then
@@ -524,7 +544,7 @@ function push-node() {
       ssh -t $i 'sudo -p "[sudo] stop the all process: " service flanneld stop;
       sudo rm -f /opt/bin/kube* /opt/bin/flanneld;
       sudo rm -rf /etc/init/kube* /etc/init/flanneld.conf /lib/systemd/system/kube* /lib/systemd/system/flanneld.service /etc/init.d/kube* /etc/init.d/flanneld;
-      sudo rm -rf /etc/default/kube* /etc/default/flanneld; 
+      sudo rm -rf /etc/default/kube* /etc/default/flanneld;
       sudo rm -rf ~/kube' || true
       provision-node $i
       existing=true
@@ -544,12 +564,12 @@ function push-node() {
     echo "node ${node_ip} does not exist"
   else
     verify-cluster
-  fi 
-  
+  fi
+
 }
 
 # Update a kubernetes cluster with required source
-function kube-push { 
+function kube-push {
   prepare-push
   source "${KUBE_ROOT}/cluster/ubuntu/${KUBE_CONFIG_FILE-"config-default.sh"}"
 
@@ -558,13 +578,13 @@ function kube-push {
     exit 1
   fi
 
-  #stop all the kube's process & etcd 
+  #stop all the kube's process & etcd
   ii=0
   for i in ${nodes}; do
     {
       echo "Cleaning on node ${i#*@}"
       if [[ "${roles[${ii}]}" == "ai" || "${roles[${ii}]}" == "a" ]]; then
-        ssh -t $i 'pgrep etcd && sudo -p "[sudo] password to stop master: " service etcd stop; 
+        ssh -t $i 'pgrep etcd && sudo -p "[sudo] password to stop master: " service etcd stop;
         sudo rm -rf /opt/bin/etcd* /etc/init/etcd.conf /lib/systemd/system/etcd.service /etc/init.d/etcd /etc/default/etcd' || true
       elif [[ "${roles[${ii}]}" == "i" ]]; then
         ssh -t $i 'pgrep flanneld && sudo -p "[sudo] password to stop node: " service flanneld stop' || true
@@ -574,7 +594,7 @@ function kube-push {
 
       ssh -t $i 'sudo rm -f /opt/bin/kube* /opt/bin/flanneld;
       sudo rm -rf /etc/init/kube* /etc/init/flanneld.conf /lib/systemd/system/kube* /lib/systemd/system/flanneld.service /etc/init.d/kube* /etc/init.d/flanneld;
-      sudo rm -rf /etc/default/kube* /etc/default/flanneld; 
+      sudo rm -rf /etc/default/kube* /etc/default/flanneld;
       sudo rm -rf ~/kube' || true
     }
     ((ii=ii+1))
