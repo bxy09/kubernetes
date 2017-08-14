@@ -52,7 +52,7 @@ spec:
 
 If, for example, you wanted to use NFS you would just need to change the
 `gcePersistentDisk` block to `nfs`. See
-[here](../../../docs/user-guide/volumes.md) for more details on volumes.
+[here](https://kubernetes.io/docs/user-guide/volumes.md) for more details on volumes.
 
 Note that in any case, the storage (in the case the GCE PersistentDisk) must be
 created independently - this is not something Kubernetes manages for you (yet).
@@ -60,7 +60,7 @@ created independently - this is not something Kubernetes manages for you (yet).
 ### I don't want or don't have persistent storage
 
 If you are running in a place that doesn't have networked storage, or if you
-just want to kick the tires on this without commiting to it, you can easily
+just want to kick the tires on this without committing to it, you can easily
 adapt the `ReplicationController` specification below to use a simple
 `emptyDir` volume instead of a `persistentVolumeClaim`.
 
@@ -91,7 +91,7 @@ spec:
 This tells Kubernetes that you want to use storage, and the `PersistentVolume`
 you created before will be bound to this claim (unless you have other
 `PersistentVolumes` in which case those might get bound instead).  This claim
-gives you the rigth to use this storage until you release the claim.
+gives you the right to use this storage until you release the claim.
 
 ## Run the registry
 
@@ -105,18 +105,18 @@ metadata:
   name: kube-registry-v0
   namespace: kube-system
   labels:
-    k8s-app: kube-registry
+    k8s-app: kube-registry-upstream
     version: v0
     kubernetes.io/cluster-service: "true"
 spec:
   replicas: 1
   selector:
-    k8s-app: kube-registry
+    k8s-app: kube-registry-upstream
     version: v0
   template:
     metadata:
       labels:
-        k8s-app: kube-registry
+        k8s-app: kube-registry-upstream
         version: v0
         kubernetes.io/cluster-service: "true"
     spec:
@@ -158,12 +158,12 @@ metadata:
   name: kube-registry
   namespace: kube-system
   labels:
-    k8s-app: kube-registry
+    k8s-app: kube-registry-upstream
     kubernetes.io/cluster-service: "true"
     kubernetes.io/name: "KubeRegistry"
 spec:
   selector:
-    k8s-app: kube-registry
+    k8s-app: kube-registry-upstream
   ports:
   - name: registry
     port: 5000
@@ -175,37 +175,52 @@ spec:
 
 Now that we have a running `Service`, we need to expose it onto each Kubernetes
 `Node` so that Docker will see it as `localhost`.  We can load a `Pod` on every
-node by dropping a YAML file into the kubelet config directory
-(/etc/kubernetes/manifests by default).
+node by creating following daemonset.
 
 <!-- BEGIN MUNGE: EXAMPLE ../../saltbase/salt/kube-registry-proxy/kube-registry-proxy.yaml -->
 ```yaml
-apiVersion: v1
-kind: Pod
+apiVersion: extensions/v1beta1
+kind: DaemonSet
 metadata:
   name: kube-registry-proxy
   namespace: kube-system
+  labels:
+    k8s-app: kube-registry-proxy
+    kubernetes.io/cluster-service: "true"
+    version: v0.4
 spec:
-  containers:
-  - name: kube-registry-proxy
-    image: gcr.io/google_containers/kube-registry-proxy:0.3
-    resources:
-      limits:
-        cpu: 100m
-        memory: 50Mi
-    env:
-    - name: REGISTRY_HOST
-      value: kube-registry.kube-system.svc.cluster.local
-    - name: REGISTRY_PORT
-      value: "5000"
-    - name: FORWARD_PORT
-      value: "5000"
-    ports:
-    - name: registry
-      containerPort: 5000
-      hostPort: 5000
+  template:
+    metadata:
+      labels:
+        k8s-app: kube-registry-proxy
+        kubernetes.io/name: "kube-registry-proxy"
+        kubernetes.io/cluster-service: "true"
+        version: v0.4
+    spec:
+      containers:
+      - name: kube-registry-proxy
+        image: gcr.io/google_containers/kube-registry-proxy:0.4
+        resources:
+          limits:
+            cpu: 100m
+            memory: 50Mi
+        env:
+        - name: REGISTRY_HOST
+          value: kube-registry.kube-system.svc.cluster.local
+        - name: REGISTRY_PORT
+          value: "5000"
+        ports:
+        - name: registry
+          containerPort: 80
+          hostPort: 5000
 ```
 <!-- END MUNGE: EXAMPLE ../../saltbase/salt/kube-registry-proxy/kube-registry-proxy.yaml -->
+
+When modifying replication-controller, service and daemon-set defintions, take
+care to ensure _unique_ identifiers for the rc-svc couple and the daemon-set.
+Failing to do so will have register the localhost proxy daemon-sets to the
+upstream service. As a result they will then try to proxy themselves, which
+will, for obvious reasons, not work.
 
 This ensures that port 5000 on each node is directed to the registry `Service`.
 You should be able to verify that it is running by hitting port 5000 with a web
@@ -234,8 +249,8 @@ You can use `kubectl` to set up a port-forward from your local node to a
 running Pod:
 
 ```console
-$ POD=$(kubectl get pods --namespace kube-system -l k8s-app=kube-registry \
-            -o template--template '{{range .items}}{{.metadata.name}} {{.status.phase}}{{"\n"}}{{end}}' \
+$ POD=$(kubectl get pods --namespace kube-system -l k8s-app=kube-registry-upstream \
+            -o template --template '{{range .items}}{{.metadata.name}} {{.status.phase}}{{"\n"}}{{end}}' \
             | grep Running | head -1 | cut -f1 -d' ')
 
 $ kubectl port-forward --namespace kube-system $POD 5000:5000 &
@@ -245,11 +260,14 @@ Now you can build and push images on your local computer as
 `localhost:5000/yourname/container` and those images will be available inside
 your kubernetes cluster with the same name.
 
+# More Extensions
+
+- [Use GCS as storage backend](gcs/README.md)
+- [Enable TLS/SSL](tls/README.md)
+- [Enable Authentication](auth/README.md)
+
 ## Future improvements
 
-* Use a NodePort Service instead of a per-node proxy process
-* Enable SSL with a cert signed by your cluster CA or provided by the user
-* Enable authentication
 * Allow port-forwarding to a Service rather than a pod (#15180)
 
 

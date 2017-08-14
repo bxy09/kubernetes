@@ -1,5 +1,5 @@
 /*
-Copyright 2015 The Kubernetes Authors All rights reserved.
+Copyright 2015 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,11 +19,14 @@ package v1_test
 import (
 	"testing"
 
+	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/testing/compat"
 	"k8s.io/kubernetes/pkg/api/validation"
-	"k8s.io/kubernetes/pkg/runtime"
-	utilvalidation "k8s.io/kubernetes/pkg/util/validation"
+
+	_ "k8s.io/kubernetes/pkg/api/install"
 )
 
 func TestCompatibility_v1_PodSecurityContext(t *testing.T) {
@@ -153,76 +156,14 @@ func TestCompatibility_v1_PodSecurityContext(t *testing.T) {
 				"spec.hostPID",
 			},
 		},
-		{
-			name: "reseting defaults for pre-v1.1 mirror pods",
-			input: `
-{
-	"kind":"Pod",
-	"apiVersion":"v1",
-	"metadata":{
-		"name":"my-pod-name",
-		"namespace":"my-pod-namespace",
-		"annotations": {
-			"kubernetes.io/config.mirror": "mirror"
-		}
-	},
-	"spec": {
-		"containers":[{
-			"name":"a",
-			"image":"my-container-image",
-			"resources": {
-				"limits": {
-					"cpu": "100m"
-				}
-			}
-		}]
-	}
-}
-`,
-			absentKeys: []string{
-				"spec.terminationGracePeriodSeconds",
-				"spec.containers[0].resources.requests",
-			},
-		},
-		{
-			name: "preserving defaults for v1.1+ mirror pods",
-			input: `
-		{
-			"kind":"Pod",
-			"apiVersion":"v1",
-			"metadata":{
-				"name":"my-pod-name",
-				"namespace":"my-pod-namespace",
-				"annotations": {
-					"kubernetes.io/config.mirror": "cbe924f710c7e26f7693d6a341bcfad0"
-				}
-			},
-			"spec": {
-				"containers":[{
-					"name":"a",
-					"image":"my-container-image",
-					"resources": {
-						"limits": {
-							"cpu": "100m"
-						}
-					}
-				}]
-			}
-		}
-		`,
-			expectedKeys: map[string]string{
-				"spec.terminationGracePeriodSeconds":    "30",
-				"spec.containers[0].resources.requests": "map[cpu:100m]",
-			},
-		},
 	}
 
-	validator := func(obj runtime.Object) utilvalidation.ErrorList {
-		return validation.ValidatePodSpec(&(obj.(*api.Pod).Spec), utilvalidation.NewFieldPath("spec"))
+	validator := func(obj runtime.Object) field.ErrorList {
+		return validation.ValidatePodSpec(&(obj.(*api.Pod).Spec), field.NewPath("spec"))
 	}
 
 	for _, tc := range cases {
 		t.Logf("Testing 1.0.0 backward compatibility for %v", tc.name)
-		compat.TestCompatibility(t, "v1", []byte(tc.input), validator, tc.expectedKeys, tc.absentKeys)
+		compat.TestCompatibility(t, v1.SchemeGroupVersion, []byte(tc.input), validator, tc.expectedKeys, tc.absentKeys)
 	}
 }

@@ -1,5 +1,5 @@
 /*
-Copyright 2014 The Kubernetes Authors All rights reserved.
+Copyright 2014 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -21,18 +21,17 @@ package abac
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/golang/glog"
 
-	"k8s.io/kubernetes/pkg/apis/abac"
-	"k8s.io/kubernetes/pkg/apis/abac/latest"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apiserver/pkg/authorization/authorizer"
+	api "k8s.io/kubernetes/pkg/apis/abac"
+	_ "k8s.io/kubernetes/pkg/apis/abac/latest"
 	"k8s.io/kubernetes/pkg/apis/abac/v0"
-	_ "k8s.io/kubernetes/pkg/apis/abac/v1beta1"
-	"k8s.io/kubernetes/pkg/auth/authorizer"
 )
 
 type policyLoadError struct {
@@ -64,6 +63,8 @@ func NewFromFile(path string) (policyList, error) {
 	scanner := bufio.NewScanner(file)
 	pl := make(policyList, 0)
 
+	decoder := api.Codecs.UniversalDecoder()
+
 	i := 0
 	unversionedLines := 0
 	for scanner.Scan() {
@@ -77,38 +78,33 @@ func NewFromFile(path string) (policyList, error) {
 			continue
 		}
 
-		dataKind, err := api.Scheme.DataKind(b)
+		decodedObj, _, err := decoder.Decode(b, nil, nil)
 		if err != nil {
-			return nil, policyLoadError{path, i, b, err}
-		}
-
-		if dataKind.IsEmpty() {
+			if !(runtime.IsMissingVersion(err) || runtime.IsMissingKind(err) || runtime.IsNotRegisteredError(err)) {
+				return nil, policyLoadError{path, i, b, err}
+			}
 			unversionedLines++
 			// Migrate unversioned policy object
 			oldPolicy := &v0.Policy{}
-			if err := latest.Codec.DecodeInto(b, oldPolicy); err != nil {
+			if err := runtime.DecodeInto(decoder, b, oldPolicy); err != nil {
 				return nil, policyLoadError{path, i, b, err}
 			}
-			if err := api.Scheme.Convert(oldPolicy, p); err != nil {
+			if err := api.Scheme.Convert(oldPolicy, p, nil); err != nil {
 				return nil, policyLoadError{path, i, b, err}
 			}
-		} else {
-			decodedObj, err := latest.Codec.Decode(b)
-			if err != nil {
-				return nil, policyLoadError{path, i, b, err}
-			}
-			decodedPolicy, ok := decodedObj.(*api.Policy)
-			if !ok {
-				return nil, policyLoadError{path, i, b, fmt.Errorf("unrecognized object: %#v", decodedObj)}
-			}
-			p = decodedPolicy
+			pl = append(pl, p)
+			continue
 		}
 
-		pl = append(pl, p)
+		decodedPolicy, ok := decodedObj.(*api.Policy)
+		if !ok {
+			return nil, policyLoadError{path, i, b, fmt.Errorf("unrecognized object: %#v", decodedObj)}
+		}
+		pl = append(pl, decodedPolicy)
 	}
 
 	if unversionedLines > 0 {
-		glog.Warningf(`Policy file %s contained unversioned rules. See docs/admin/authorization.md#abac-mode for ABAC file format details.`, path)
+		glog.Warningf("Policy file %s contained unversioned rules. See docs/admin/authorization.md#abac-mode for ABAC file format details.", path)
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -136,12 +132,19 @@ func matches(p api.Policy, a authorizer.Attributes) bool {
 func subjectMatches(p api.Policy, a authorizer.Attributes) bool {
 	matched := false
 
+	username := ""
+	groups := []string{}
+	if user := a.GetUser(); user != nil {
+		username = user.GetName()
+		groups = user.GetGroups()
+	}
+
 	// If the policy specified a user, ensure it matches
 	if len(p.Spec.User) > 0 {
 		if p.Spec.User == "*" {
 			matched = true
 		} else {
-			matched = p.Spec.User == a.GetUserName()
+			matched = p.Spec.User == username
 			if !matched {
 				return false
 			}
@@ -154,7 +157,7 @@ func subjectMatches(p api.Policy, a authorizer.Attributes) bool {
 			matched = true
 		} else {
 			matched = false
-			for _, group := range a.GetGroups() {
+			for _, group := range groups {
 				if p.Spec.Group == group {
 					matched = true
 				}
@@ -218,13 +221,13 @@ func resourceMatches(p api.Policy, a authorizer.Attributes) bool {
 }
 
 // Authorizer implements authorizer.Authorize
-func (pl policyList) Authorize(a authorizer.Attributes) error {
+func (pl policyList) Authorize(a authorizer.Attributes) (bool, string, error) {
 	for _, p := range pl {
 		if matches(*p, a) {
-			return nil
+			return true, "", nil
 		}
 	}
-	return errors.New("No policy matched.")
+	return false, "No policy matched.", nil
 	// TODO: Benchmark how much time policy matching takes with a medium size
 	// policy file, compared to other steps such as encoding/decoding.
 	// Then, add Caching only if needed.

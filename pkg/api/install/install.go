@@ -1,5 +1,5 @@
 /*
-Copyright 2014 The Kubernetes Authors All rights reserved.
+Copyright 2014 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,95 +19,52 @@ limitations under the License.
 package install
 
 import (
-	"fmt"
-
-	"github.com/golang/glog"
-
-	"k8s.io/kubernetes/pkg/api/latest"
-	"k8s.io/kubernetes/pkg/util/sets"
-
+	"k8s.io/apimachinery/pkg/apimachinery/announced"
+	"k8s.io/apimachinery/pkg/apimachinery/registered"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/meta"
-	"k8s.io/kubernetes/pkg/api/registered"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/runtime"
 )
 
-// userResources is a group of resources mostly used by a kubectl user
-var userResources = []string{"rc", "svc", "pods", "pvc"}
-
-const importPrefix = "k8s.io/kubernetes/pkg/api"
-
-var accessor = meta.NewAccessor()
-
 func init() {
-	groupMeta, err := latest.RegisterGroup("")
-	if err != nil {
-		glog.V(4).Infof("%v", err)
-		return
-	}
-
-	// Use the first API version in the list of registered versions as the latest.
-	registeredGroupVersions := registered.GroupVersionsForGroup("")
-	groupVersion := registeredGroupVersions[0]
-	*groupMeta = latest.GroupMeta{
-		GroupVersion: groupVersion,
-		Codec:        runtime.CodecFor(api.Scheme, groupVersion.String()),
-	}
-
-	worstToBestGroupVersions := []unversioned.GroupVersion{}
-	for i := len(registeredGroupVersions) - 1; i >= 0; i-- {
-		worstToBestGroupVersions = append(worstToBestGroupVersions, registeredGroupVersions[i])
-	}
-	groupMeta.GroupVersions = registeredGroupVersions
-
-	groupMeta.SelfLinker = runtime.SelfLinker(accessor)
-
-	// the list of kinds that are scoped at the root of the api hierarchy
-	// if a kind is not enumerated here, it is assumed to have a namespace scope
-	rootScoped := sets.NewString(
-		"Node",
-		"Namespace",
-		"PersistentVolume",
-		"ComponentStatus",
-	)
-
-	// these kinds should be excluded from the list of resources
-	ignoredKinds := sets.NewString(
-		"ListOptions",
-		"DeleteOptions",
-		"Status",
-		"PodLogOptions",
-		"PodExecOptions",
-		"PodAttachOptions",
-		"PodProxyOptions",
-		"ThirdPartyResource",
-		"ThirdPartyResourceData",
-		"ThirdPartyResourceList")
-
-	mapper := api.NewDefaultRESTMapper(worstToBestGroupVersions, interfacesFor, importPrefix, ignoredKinds, rootScoped)
-	// setup aliases for groups of resources
-	mapper.AddResourceAlias("all", userResources...)
-	groupMeta.RESTMapper = mapper
-	api.RegisterRESTMapper(groupMeta.RESTMapper)
-	groupMeta.InterfacesFor = interfacesFor
+	Install(api.GroupFactoryRegistry, api.Registry, api.Scheme)
 }
 
-// InterfacesFor returns the default Codec and ResourceVersioner for a given version
-// string, or an error if the version is not known.
-func interfacesFor(version string) (*meta.VersionInterfaces, error) {
-	switch version {
-	case "v1":
-		return &meta.VersionInterfaces{
-			Codec:            v1.Codec,
-			ObjectConvertor:  api.Scheme,
-			MetadataAccessor: accessor,
-		}, nil
-	default:
-		{
-			g, _ := latest.Group("")
-			return nil, fmt.Errorf("unsupported storage version: %s (valid: %v)", version, g.GroupVersions)
-		}
+// Install registers the API group and adds types to a scheme
+func Install(groupFactoryRegistry announced.APIGroupFactoryRegistry, registry *registered.APIRegistrationManager, scheme *runtime.Scheme) {
+	if err := announced.NewGroupMetaFactory(
+		&announced.GroupMetaFactoryArgs{
+			GroupName:                  api.GroupName,
+			VersionPreferenceOrder:     []string{v1.SchemeGroupVersion.Version},
+			ImportPrefix:               "k8s.io/api/core",
+			AddInternalObjectsToScheme: api.AddToScheme,
+			RootScopedKinds: sets.NewString(
+				"Node",
+				"Namespace",
+				"PersistentVolume",
+				"ComponentStatus",
+			),
+			IgnoredKinds: sets.NewString(
+				"ListOptions",
+				"DeleteOptions",
+				"Status",
+				"PodLogOptions",
+				"PodExecOptions",
+				"PodAttachOptions",
+				"PodPortForwardOptions",
+				"PodProxyOptions",
+				"NodeProxyOptions",
+				"ServiceProxyOptions",
+				"ThirdPartyResource",
+				"ThirdPartyResourceData",
+				"ThirdPartyResourceList",
+			),
+		},
+		announced.VersionToSchemeFunc{
+			v1.SchemeGroupVersion.Version: v1.AddToScheme,
+		},
+	).Announce(groupFactoryRegistry).RegisterAndEnable(registry, scheme); err != nil {
+		panic(err)
 	}
 }

@@ -1,5 +1,5 @@
 /*
-Copyright 2014 The Kubernetes Authors All rights reserved.
+Copyright 2014 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -56,6 +56,36 @@ func TestGetGroup(t *testing.T) {
 	}
 	for _, test := range testCases {
 		actual := GetGroup(test.groupVersion)
+		if test.output != actual {
+			t.Errorf("expect version: %s, got: %s\n", test.output, actual)
+		}
+	}
+}
+
+func TestGetGroupVersion(t *testing.T) {
+	testCases := []struct {
+		group   string
+		version string
+		output  string
+	}{
+		{
+			"",
+			"v1",
+			"v1",
+		},
+		{
+			"extensions",
+			"",
+			"extensions/",
+		},
+		{
+			"extensions",
+			"v1beta1",
+			"extensions/v1beta1",
+		},
+	}
+	for _, test := range testCases {
+		actual := GetGroupVersion(test.group, test.version)
 		if test.output != actual {
 			t.Errorf("expect version: %s, got: %s\n", test.output, actual)
 		}
